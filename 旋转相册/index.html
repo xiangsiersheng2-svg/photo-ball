@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>3D球形照片墙（支持视频）</title>
+<style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+        font-family: Arial, sans-serif;
+    }
+    #wrap {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        perspective: 1400px;
+        overflow: hidden;
+    }
+    #stars {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+        z-index: 0;
+    }
+    #hint {
+        position: fixed;
+        left: 18px;
+        top: 18px;
+        z-index: 20;
+        color: rgba(255,255,255,0.62);
+        font-size: 13px;
+        line-height: 1.7;
+        user-select: none;
+    }
+    #musicBtn {
+        position: fixed;
+        right: 18px;
+        top: 18px;
+        z-index: 30;
+        width: 42px;
+        height: 42px;
+        border-radius: 50%;
+        border: 1px solid rgba(255,255,255,0.12);
+        background: rgba(255,255,255,0.05);
+        backdrop-filter: blur(6px);
+        color: rgba(255,255,255,0.78);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        user-select: none;
+        transition: all 0.25s ease;
+        font-size: 18px;
+    }
+    #musicBtn:hover {
+        background: rgba(255,255,255,0.09);
+        color: rgba(255,255,255,0.95);
+    }
+    #musicBtn.off { opacity: 0.58; }
+
+    #sphere {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 0;
+        height: 0;
+        transform-style: preserve-3d;
+        transform: translate(-50%, -50%);
+        z-index: 2;
+    }
+
+    .item {
+        position: absolute;
+        border-radius: 14px;
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+        border: 2px solid rgba(255,255,255,0.16);
+        box-shadow: 0 8px 22px rgba(255,255,255,0.16);
+        cursor: pointer;
+        overflow: hidden;
+        transition: transform 0.35s ease, box-shadow 0.35s ease, opacity 0.35s ease;
+        backface-visibility: hidden;
+    }
+    .item::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(to top, rgba(0,0,0,0.22), transparent 46%);
+        pointer-events: none;
+    }
+    .item.video::before {
+        content: "▶";
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        background: rgba(0,0,0,0.35);
+        color: rgba(255,255,255,0.95);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        z-index: 2;
+    }
+
+    #viewer {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.78);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 100;
+        padding: 20px;
+    }
+    #viewer.active { display: flex; }
+    #viewerCard {
+        position: relative;
+        width: min(90vw, 440px);
+        aspect-ratio: 3 / 4;
+        border-radius: 18px;
+        overflow: hidden;
+        box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+        background: #000;
+    }
+    #viewerImg, #viewerVideo {
+        width: 100%;
+        height: 100%;
+        display: none;
+        background: #000;
+    }
+    #viewerImg {
+        object-fit: contain;
+    }
+    #viewerVideo {
+        object-fit: contain;
+    }
+    #viewerClose {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        width: 38px;
+        height: 38px;
+        border-radius: 50%;
+        background: rgba(0,0,0,0.45);
+        color: #fff;
+        border: 1px solid rgba(255,255,255,0.25);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 22px;
+        cursor: pointer;
+        user-select: none;
+        z-index: 5;
+    }
+
+    @media (max-width: 768px) {
+        #hint { font-size: 12px; left: 14px; top: 14px; }
+        #musicBtn { right: 14px; top: 14px; width: 40px; height: 40px; }
+    }
+</style>
+</head>
+<body>
+<div id="wrap">
+    <canvas id="stars"></canvas>
+
+    <div id="hint">
+        点击照片或视频封面可放大<br>
+        视频打开后会自动播放<br>
+        关闭视频后背景音乐继续播放
+    </div>
+
+    <div id="musicBtn" title="音乐开关">♪</div>
+    <div id="sphere"></div>
+</div>
+
+<div id="viewer">
+    <div id="viewerCard">
+        <img id="viewerImg" src="" alt="预览图">
+        <video id="viewerVideo" controls playsinline></video>
+        <div id="viewerClose">×</div>
+    </div>
+</div>
+
+<audio id="bgm" src="music/玻璃.mp3" autoplay loop playsinline></audio>
+
+<script>
+const sphere = document.getElementById("sphere");
+const wrap = document.getElementById("wrap");
+const viewer = document.getElementById("viewer");
+const viewerImg = document.getElementById("viewerImg");
+const viewerVideo = document.getElementById("viewerVideo");
+const viewerClose = document.getElementById("viewerClose");
+const audio = document.getElementById("bgm");
+const musicBtn = document.getElementById("musicBtn");
+
+// type: "image" 或 "video"
+// cover 是小图封面，src 是点击后打开的内容
+const mediaData = [
+    { type: "image", cover: "picture/1.jpg", src: "picture/1.jpg" },
+    { type: "video", cover: "img/video-cover-4.jpg", src: "video/4.mp4" },
+    { type: "image", cover: "picture/2.jpg", src: "picture/2.jpg" },
+    { type: "video", cover: "img/video-cover-10.jpg", src: "video/10.mp4" },
+    { type: "image", cover: "picture/3.jpg", src: "picture/3.jpg" },
+    { type: "video", cover: "img/video-cover-1.jpg", src: "video/1.mp4" },
+    { type: "image", cover: "picture/4.jpg", src: "picture/4.jpg" },
+    { type: "video", cover: "img/video-cover-2.jpg", src: "video/2.mp4" },
+    { type: "image", cover: "picture/5.jpg", src: "picture/5.jpg" },
+    { type: "video", cover: "img/video-cover-9.jpg", src: "video/9.mp4" },
+    { type: "image", cover: "picture/6.jpg", src: "picture/6.jpg" },
+    { type: "video", cover: "img/video-cover-3.jpg", src: "video/3.mp4" },
+    { type: "image", cover: "picture/7.jpg", src: "picture/7.jpg" },
+    { type: "image", cover: "img/8.jpg", src: "img/8.jpg" },
+    { type: "video", cover: "img/video-cover-5.jpg", src: "video/5.mp4" },
+    { type: "image", cover: "img/9.jpg", src: "img/9.jpg" },
+    { type: "video", cover: "img/video-cover-11.jpg", src: "video/11.mp4" },
+    { type: "image", cover: "img/10.jpg", src: "img/10.jpg" },
+    { type: "video", cover: "img/video-cover-6.jpg", src: "video/6.mp4" },
+    { type: "image", cover: "img/11.jpg", src: "img/11.jpg" },
+    { type: "video", cover: "img/video-cover-7.jpg", src: "video/7.mp4" },
+    { type: "image", cover: "img/12.jpg", src: "img/12.jpg" },
+    { type: "video", cover: "img/video-cover-8.jpg", src: "video/8.mp4" },
+    { type: "image", cover: "img/13.jpg", src: "img/13.jpg" }
+];
+
+const items = [];
+mediaData.forEach((data) => {
+    const div = document.createElement("div");
+    div.className = `item ${data.type === "video" ? "video" : ""}`;
+    div.style.backgroundImage = `url(${data.cover})`;
+    div.dataset.type = data.type;
+    div.dataset.src = data.src;
+    div.dataset.cover = data.cover;
+
+    div.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openViewer(data);
+    });
+
+    sphere.appendChild(div);
+    items.push(div);
+});
+
+function clamp(val, min, max) {
+    return Math.max(min, Math.min(max, val));
+}
+
+function getAdaptiveConfig(count) {
+    const mobile = window.innerWidth < 768;
+    let cardW;
+    if (mobile) {
+        if (count <= 16) cardW = 96;
+        else if (count <= 24) cardW = 84;
+        else if (count <= 36) cardW = 74;
+        else cardW = 64;
+    } else {
+        if (count <= 16) cardW = 122;
+        else if (count <= 24) cardW = 108;
+        else if (count <= 36) cardW = 94;
+        else if (count <= 50) cardW = 82;
+        else cardW = 72;
+    }
+    const cardH = Math.round(cardW * 4 / 3);
+    const baseRadius = mobile ? 220 : 300;
+    const extraRadius = count * (mobile ? 4.8 : 5.5);
+    const radius = clamp(baseRadius + extraRadius, mobile ? 220 : 280, mobile ? 420 : 620);
+    return { cardW, cardH, radius };
+}
+
+function layoutSphere() {
+    const total = items.length;
+    const { cardW, cardH, radius } = getAdaptiveConfig(total);
+
+    items.forEach((item, i) => {
+        item.style.width = `${cardW}px`;
+        item.style.height = `${cardH}px`;
+
+        const phi = Math.acos(1 - 2 * (i + 0.5) / total);
+        const theta = Math.PI * (1 + Math.sqrt(5)) * (i + 0.5);
+
+        const x = radius * Math.sin(phi) * Math.cos(theta);
+        const y = radius * Math.cos(phi);
+        const z = radius * Math.sin(phi) * Math.sin(theta);
+
+        item.dataset.x = x;
+        item.dataset.y = y;
+        item.dataset.z = z;
+        item.style.transform = `translate3d(${x}px, ${y}px, ${z}px)`;
+
+       // item.style.transform = `translate3d(${x}px, ${y}px, ${z}px) rotateY(${Math.atan2(x, z)}rad)`;
+    });
+}
+layoutSphere();
+
+let rotX = -12;
+let rotY = 0;
+let dragging = false;
+let autoRotate = true;
+let lastX = 0;
+let lastY = 0;
+let velocityX = 0.025;
+let velocityY = 0.10;
+
+function renderSphere() {
+    if (autoRotate && !dragging && !viewer.classList.contains("active")) {
+        rotY += velocityY;
+        rotX += velocityX;
+    }
+
+    sphere.style.transform = `
+        translate(-50%, -50%)
+        rotateX(${rotX}deg)
+        rotateY(${rotY}deg)
+    `;
+
+    items.forEach((item) => {
+        const x = item.dataset.x;
+        const y = item.dataset.y;
+        const z = item.dataset.z;
+
+        item.style.transform = `
+            translate3d(${x}px, ${y}px, ${z}px)
+            rotateY(${-rotY}deg)
+            rotateX(${-rotX}deg)
+        `;
+    });
+
+    requestAnimationFrame(renderSphere);
+}
+renderSphere();
+
+wrap.addEventListener("mousedown", (e) => {
+    dragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+});
+window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    rotY += dx * 0.24;
+    rotX -= dy * 0.18;
+    lastX = e.clientX;
+    lastY = e.clientY;
+});
+window.addEventListener("mouseup", () => dragging = false);
+
+wrap.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) return;
+    dragging = true;
+    lastX = e.touches[0].clientX;
+    lastY = e.touches[0].clientY;
+}, { passive: true });
+wrap.addEventListener("touchmove", (e) => {
+    if (!dragging || e.touches.length !== 1) return;
+    const x = e.touches[0].clientX;
+    const y = e.touches[0].clientY;
+    const dx = x - lastX;
+    const dy = y - lastY;
+    rotY += dx * 0.3;
+    rotX -= dy * 0.22;
+    lastX = x;
+    lastY = y;
+}, { passive: true });
+wrap.addEventListener("touchend", () => dragging = false);
+
+wrap.addEventListener("dblclick", (e) => {
+    if (e.target.classList.contains("item")) return;
+    autoRotate = !autoRotate;
+});
+
+let restoreBgmAfterViewer = false;
+
+function openViewer(data) {
+    viewer.classList.add("active");
+
+    viewerImg.style.display = "none";
+    viewerVideo.style.display = "none";
+    viewerImg.src = "";
+    viewerVideo.pause();
+    viewerVideo.removeAttribute("src");
+    viewerVideo.load();
+
+    if (data.type === "video") {
+        restoreBgmAfterViewer = !audio.paused;
+        audio.pause();
+        musicBtn.classList.add("off");
+
+        viewerVideo.src = data.src;
+        viewerVideo.style.display = "block";
+        viewerVideo.currentTime = 0;
+        viewerVideo.play().catch(() => {});
+    } else {
+        viewerImg.src = data.src;
+        viewerImg.style.display = "block";
+    }
+}
+
+function closeViewer() {
+    const wasVideoOpen = viewerVideo.style.display === "block";
+
+    viewer.classList.remove("active");
+    viewerImg.src = "";
+    viewerVideo.pause();
+    viewerVideo.removeAttribute("src");
+    viewerVideo.load();
+    viewerVideo.style.display = "none";
+    viewerImg.style.display = "none";
+
+    if (wasVideoOpen && restoreBgmAfterViewer) {
+        audio.play().catch(() => {});
+        musicBtn.classList.remove("off");
+    }
+}
+
+viewerClose.addEventListener("click", closeViewer);
+viewer.addEventListener("click", (e) => {
+    if (e.target === viewer) closeViewer();
+});
+
+function tryPlayMusic() {
+    if (!viewer.classList.contains("active") && audio.paused) {
+        audio.play().then(() => {
+            musicBtn.classList.remove("off");
+        }).catch(() => {
+            musicBtn.classList.add("off");
+        });
+    }
+}
+
+document.addEventListener("click", tryPlayMusic, { once: true });
+document.addEventListener("touchstart", tryPlayMusic, { once: true });
+tryPlayMusic();
+
+musicBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (audio.paused) {
+        audio.play().then(() => {
+            musicBtn.classList.remove("off");
+        }).catch(() => {});
+    } else {
+        audio.pause();
+        musicBtn.classList.add("off");
+    }
+});
+
+const canvas = document.getElementById("stars");
+const ctx = canvas.getContext("2d");
+let stars = [];
+
+function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    createStars();
+    layoutSphere();
+}
+
+function createStars() {
+    const count = Math.floor((window.innerWidth * window.innerHeight) / 9000);
+    stars = [];
+    for (let i = 0; i < count; i++) {
+        stars.push({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height,
+            r: Math.random() * 1.6 + 0.3,
+            a: Math.random() * 0.8 + 0.2,
+            s: Math.random() * 0.25 + 0.05
+        });
+    }
+}
+
+function drawStars() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (const star of stars) {
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${star.a})`;
+        ctx.fill();
+        star.y += star.s;
+        if (star.y > canvas.height) {
+            star.y = -2;
+            star.x = Math.random() * canvas.width;
+        }
+    }
+    requestAnimationFrame(drawStars);
+}
+
+resizeCanvas();
+drawStars();
+window.addEventListener("resize", resizeCanvas);
+</script>
+</body>
+</html>
